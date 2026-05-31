@@ -14,11 +14,32 @@ Each area goes through three phases:
 
 1. **Reconnaissance** -- read the target code, its callers, specs, and existing tests. Understand invariants, state transitions, concurrency model, and error propagation. Identify what existing tests cover vs miss.
 
-2. **Hypothesis formation** -- form specific, testable hypotheses about defects: edge cases, race conditions, state corruption on partial failure, silent failures, assumption violations. Discard scenarios the architecture already prevents. Each hypothesis becomes a test plan item.
+2. **Hypothesis formation** -- form specific, testable hypotheses about defects: logic errors in real code paths, state corruption on partial failure, shape mismatches between producer and consumer, silent failures. Every hypothesis must pass the realism filter (see below). Each hypothesis becomes a test plan item.
 
-3. **Probing** -- write a test for each hypothesis and run it. A passing test (GREEN) either covers an important invariant or is discarded as redundant. A failing test (RED) proves a bug exists; fix the production code, not the test.
+3. **Probing** -- write a test for each hypothesis and run it. A passing test (GREEN) either covers an important invariant or is discarded as redundant. A failing test (RED) proves a bug exists; fix the production code at the root cause layer, not the test and not a downstream consumer.
 
 This is code inspection with automated verification -- not fault injection or mutation testing.
+
+## Realism Filter
+
+Every hypothesis must pass this filter before it enters the test plan. The goal is to find bugs that real users will hit, not theoretical flaws that require impossible inputs.
+
+For each hypothesis, trace the call chain from the entry point (UI, CLI, scheduled job) down to the function under test. Ask: can the problematic input actually arrive through this chain? If every caller already guarantees valid input, the hypothesis is theoretical -- discard it.
+
+**Discard:**
+
+- Redundant validation for internal functions whose callers already guarantee correct input
+- Scenarios that require contract violations no real caller can produce
+- Type-level imprecisions that every consumer already handles correctly
+- Hardening against error shapes or values that real code never produces
+
+**Prioritize:**
+
+- Logic errors in code paths that run during normal use
+- Mismatches between what a producer sends and what a consumer reads
+- Wrong-layer problems where the fix belongs at the source, not in downstream consumers
+- State corruption from partial failure that persists after the operation
+- Silent data loss where an operation appears to succeed but drops data
 
 Modes:
 
@@ -74,7 +95,7 @@ Tell the agent to:
    - **Data integrity boundaries** -- persistence, sync, serialization, cross-system data flow
    - **Error propagation paths** -- operations that depend on prior operations succeeding, result chains
    - **Recently changed code** -- `git log --oneline -20` to find areas with recent churn
-   Cross-reference each candidate against existing tests to find gaps.
+     Cross-reference each candidate against existing tests to find gaps.
 
 2. Create `temp/` directory if it doesn't exist. Write `temp/exploratory-testing-plan.md` with 3-6 target areas, ordered by risk. All areas start with `Status: pending`.
 
@@ -86,9 +107,11 @@ Tell the agent to:
 
 2. Read the target code, its callers, and existing tests thoroughly. Understand invariants, state transitions, concurrency model, error propagation, and what existing tests cover vs miss.
 
-3. Identify realistic bug hypotheses -- edge cases, race conditions, state corruption on partial failure, silent failures, assumption violations. Discard scenarios that the architecture or documented invariants already prevent (check specs, CLAUDE.md, ADRs, code comments).
+3. **Trace call chains to their origin.** For each function under test, identify every caller back to the entry point. Understand what inputs can actually arrive at runtime. This is the most important step -- it determines whether a hypothesis is realistic or theoretical.
 
-4. Fill in `### Recon Notes` with concise findings (max ~10 lines): key invariants, realistic concerns identified, and a brief list of discarded hypotheses with one-line reasons. Detailed architecture summaries belong in the code, not the plan. Add `### Test Plan` with 3-8 specific test hypotheses as unchecked items using `- [ ]` checkbox format -- only scenarios that are realistic given the documented design. Change status to `testing`.
+4. Identify bug hypotheses and apply the Realism Filter. Discard hypotheses where the problematic input cannot arrive through actual callers. For each surviving hypothesis, describe the concrete user action or system event that triggers it.
+
+5. Fill in `### Recon Notes` with concise findings (max ~10 lines): key invariants, realistic concerns identified, and a brief list of discarded hypotheses with one-line reasons. Detailed architecture summaries belong in the code, not the plan. Add `### Test Plan` with 3-8 specific test hypotheses as unchecked items using `- [ ]` checkbox format. Each item must name the realistic trigger scenario. Change status to `testing`.
 
 ### Area in `testing` with unchecked test items -> Agent: Write and Run One Test
 
@@ -106,9 +129,9 @@ Tell the agent which test item to execute (the first unchecked one). The agent m
    - [x] `test name` -- GREEN, deleted (no bug found)
    ```
 
-4. **If RED** (test fails): bug found. Fix the production code (not the test):
-   - Diagnose the root cause
-   - Fix the code
+4. **If RED** (test fails): bug found. Fix the production code at the root cause layer (not the test, not a downstream consumer):
+   - Diagnose the root cause. Ask: which layer is producing the wrong behavior? Fix the source, not the consumers.
+   - Fix the code at the source of the problem
    - Run the test again to confirm it passes
    - Run the full test suite to check for regressions
    - Compile to verify no build breakage
@@ -155,7 +178,7 @@ Report to the user that the plan is complete.
 - One unit of work per invocation. This keeps commits granular and lets the loop pace itself.
 - **Commits**: only commit when a bug is found and fixed (RED tests). GREEN tests are deleted -- they proved no bug exists, so they add no value. Commit the fix and its test together after each RED result. No commit happens when an area finishes with only GREEN results.
 - Never ask the user questions -- make decisions autonomously.
-- If a test is ambiguous (unclear whether it's a real bug or a test design issue), lean toward keeping the test and fixing the code.
+- If a test is ambiguous (unclear whether it's a real bug or a test design issue), re-check the realism filter. If no real caller can trigger the scenario, discard the test. Only keep it if you can name a concrete user action that triggers the bug.
 - If compilation or tests fail in a way the agent can't fix, mark the test as ignored and move on to the next item.
 - Never delete `temp/exploratory-testing-plan.md`. To start a new run, add a new plan section below the existing one.
 - Test plan items MUST use `- [ ]` checkbox format. If an agent writes items without checkboxes, fix them before proceeding.
