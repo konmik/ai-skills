@@ -95,7 +95,7 @@ Tell the agent to:
    - **Data integrity boundaries** -- persistence, sync, serialization, cross-system data flow
    - **Error propagation paths** -- operations that depend on prior operations succeeding, result chains
    - **Recently changed code** -- `git log --oneline -20` to find areas with recent churn
-     Cross-reference each candidate against existing tests to find gaps.
+   Cross-reference each candidate against existing tests to find gaps.
 
 2. Create `temp/` directory if it doesn't exist. Write `temp/exploratory-testing-plan.md` with 3-6 target areas, ordered by risk. All areas start with `Status: pending`.
 
